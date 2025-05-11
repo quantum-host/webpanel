@@ -1,0 +1,607 @@
+{% extends "baseTemplate/index.html" %}
+{% load i18n %}
+{% block title %}{% trans "WordPress Toolkit - CyberPanel" %}{% endblock %}
+
+{% block header_scripts %}
+    <!-- Add Font Awesome CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    <script>
+        // Create or get the CyberCP module
+        try {
+            angular.module('CyberCP');
+        } catch(err) {
+            angular.module('CyberCP', []);
+        }
+
+        // Now add our controller to the module
+        angular.module('CyberCP').controller('listWordPressSites', function($scope, $http) {
+            $scope.wpSites = {{ wpsite|safe }};
+            $scope.debug = {{ debug_info|safe }};
+            $scope.totalSites = {{ total_sites }};
+            $scope.userId = $scope.debug.user_id;
+            $scope.isAdmin = $scope.debug.is_admin;
+            $scope.wpSitesCount = $scope.debug.wp_sites_count;
+            $scope.currentPage = 1;
+            $scope.recordsToShow = 10;
+            $scope.expandedSites = {}; // Track which sites are expanded
+            $scope.currentWP = null; // Store current WordPress site for password protection
+
+            // Function to toggle site expansion
+            $scope.toggleSite = function(site) {
+                if (!$scope.expandedSites[site.id]) {
+                    $scope.expandedSites[site.id] = true;
+                    site.loading = true;
+                    site.loadingPlugins = true;
+                    site.loadingTheme = true;
+                    fetchSiteData(site);
+                } else {
+                    $scope.expandedSites[site.id] = false;
+                }
+            };
+
+            // Function to check if site is expanded
+            $scope.isExpanded = function(siteId) {
+                return $scope.expandedSites[siteId];
+            };
+
+            // Function to check if site data is loaded
+            $scope.isDataLoaded = function(site) {
+                return site.version !== undefined;
+            };
+
+            $scope.updatePagination = function() {
+                var filteredSites = $scope.wpSites;
+                if ($scope.searchText) {
+                    filteredSites = $scope.wpSites.filter(function(site) {
+                        return site.title.toLowerCase().includes($scope.searchText.toLowerCase()) ||
+                               site.url.toLowerCase().includes($scope.searchText.toLowerCase());
+                    });
+                }
+                $scope.totalPages = Math.ceil(filteredSites.length / $scope.recordsToShow);
+                if ($scope.currentPage > $scope.totalPages) {
+                    $scope.currentPage = 1;
+                }
+            };
+
+            $scope.$watch('searchText', function() {
+                $scope.updatePagination();
+            });
+
+            $scope.$watch('recordsToShow', function() {
+                $scope.updatePagination();
+            });
+
+            $scope.updatePagination();
+
+            $scope.getFullUrl = function(url) {
+                if (!url) return '';
+                if (url.startsWith('http://') || url.startsWith('https://')) {
+                    return url;
+                }
+                return 'https://' + url;
+            };
+
+            $scope.deleteWPSite = function(site) {
+                if (confirm('Are you sure you want to delete this WordPress site? This action cannot be undone.')) {
+                    window.location.href = "{% url 'ListWPSites' %}?DeleteID=" + site.id;
+                }
+            };
+
+            $scope.updateSetting = function(site, setting) {
+                var settingMap = {
+                    'search-indexing': 'searchIndex',
+                    'debugging': 'debugging',
+                    'password-protection': 'passwordProtection',
+                    'maintenance-mode': 'maintenanceMode'
+                };
+
+                var data = {
+                    WPid: site.id,
+                    setting: setting,
+                    value: site[settingMap[setting]] ? 1 : 0
+                };
+
+                GLobalAjaxCall($http, "{% url 'UpdateWPSettings' %}", data, 
+                    function(response) {
+                        if (!response.data.status) {
+                            site[settingMap[setting]] = !site[settingMap[setting]];
+                            new PNotify({
+                                title: 'Operation Failed!',
+                                text: response.data.error_message || 'Unknown error',
+                                type: 'error'
+                            });
+                        } else {
+                            new PNotify({
+                                title: 'Success!',
+                                text: 'Setting updated successfully.',
+                                type: 'success'
+                            });
+                        }
+                    }, 
+                    function(response) {
+                        site[settingMap[setting]] = !site[settingMap[setting]];
+                        new PNotify({
+                            title: 'Operation Failed!',
+                            text: 'Could not connect to server, please try again.',
+                            type: 'error'
+                        });
+                    }
+                );
+            };
+
+            // Function to fetch plugin data
+            function fetchPluginData(site) {
+                var data = { WPid: site.id };
+                GLobalAjaxCall($http, "{% url 'GetCurrentPlugins' %}", data,
+                    function(response) {
+                        if (response.data.status === 1) {
+                            try {
+                                var plugins = JSON.parse(response.data.plugins);
+                                // WordPress CLI returns an array of objects with 'name' and 'status' properties
+                                site.activePlugins = plugins.filter(function(p) { 
+                                    return p.status && p.status.toLowerCase() === 'active'; 
+                                }).length;
+                                site.totalPlugins = plugins.length;
+                            } catch (e) {
+                                console.error('Error parsing plugin data:', e);
+                                site.activePlugins = 'Error';
+                                site.totalPlugins = 'Error';
+                            }
+                        } else {
+                            site.activePlugins = 'Error';
+                            site.totalPlugins = 'Error';
+                        }
+                        site.loadingPlugins = false;
+                    },
+                    function(response) {
+                        site.activePlugins = 'Error';
+                        site.totalPlugins = 'Error';
+                        site.loadingPlugins = false;
+                    }
+                );
+            }
+
+            // Function to fetch theme data
+            function fetchThemeData(site) {
+                var data = { WPid: site.id };
+                GLobalAjaxCall($http, "{% url 'GetCurrentThemes' %}", data,
+                    function(response) {
+                        if (response.data.status === 1) {
+                            var themes = JSON.parse(response.data.themes);
+                            site.activeTheme = themes.find(function(t) { return t.status === 'active'; }).name;
+                            site.totalThemes = themes.length;
+                        }
+                        site.loadingTheme = false;
+                    },
+                    function(response) {
+                        site.activeTheme = 'Error';
+                        site.loadingTheme = false;
+                    }
+                );
+            }
+
+            // Function to fetch site data
+            function fetchSiteData(site) {
+                var data = { WPid: site.id };
+                site.fullUrl = $scope.getFullUrl(site.url);
+                site.phpVersion = 'Loading...'; // Set initial loading state
+
+                GLobalAjaxCall($http, "{% url 'FetchWPdata' %}", data,
+                    function(response) {
+                        if (response.data.status === 1) {
+                            var data = response.data.ret_data;
+                            site.version = data.version;
+                            site.phpVersion = data.phpVersion || 'PHP 7.4'; // Default to PHP 7.4 if not set
+                            site.searchIndex = data.searchIndex === 1;
+                            site.debugging = data.debugging === 1;
+                            site.passwordProtection = data.passwordprotection === 1;
+                            site.maintenanceMode = data.maintenanceMode === 1;
+                            site.loading = false;
+                            fetchPluginData(site);
+                            fetchThemeData(site);
+                        } else {
+                            site.phpVersion = 'PHP 7.4'; // Default value on error
+                            site.loading = false;
+                            console.log('Failed to fetch site data:', response.data.error_message);
+                        }
+                    },
+                    function(response) {
+                        site.phpVersion = 'PHP 7.4'; // Default value on error
+                        site.loading = false;
+                        console.log('Failed to fetch site data');
+                    }
+                );
+            }
+
+            if ($scope.wpSites && $scope.wpSites.length > 0) {
+                // Load data for first site by default
+                $scope.expandedSites[$scope.wpSites[0].id] = true;
+                fetchSiteData($scope.wpSites[0]);
+            }
+
+            $scope.togglePasswordProtection = function(site) {
+                if (site.passwordProtection) {
+                    // Show modal for credentials
+                    site.PPUsername = "";
+                    site.PPPassword = "";
+                    $scope.currentWP = site;
+                    $('#passwordProtectionModal').modal('show');
+                } else {
+                    // Disable password protection
+                    var data = {
+                        WPid: site.id,
+                        setting: 'password-protection',
+                        value: 0
+                    };
+                    
+                    GLobalAjaxCall($http, "{% url 'UpdateWPSettings' %}", data, 
+                        function(response) {
+                            if (!response.data.status) {
+                                site.passwordProtection = !site.passwordProtection;
+                                new PNotify({
+                                    title: 'Operation Failed!',
+                                    text: response.data.error_message || 'Failed to disable password protection',
+                                    type: 'error'
+                                });
+                            } else {
+                                new PNotify({
+                                    title: 'Success!',
+                                    text: 'Password protection disabled successfully.',
+                                    type: 'success'
+                                });
+                            }
+                        },
+                        function(error) {
+                            site.passwordProtection = !site.passwordProtection;
+                            new PNotify({
+                                title: 'Operation Failed!',
+                                text: 'Could not connect to server.',
+                                type: 'error'
+                            });
+                        }
+                    );
+                }
+            };
+
+            $scope.submitPasswordProtection = function() {
+                if (!$scope.currentWP) {
+                    new PNotify({
+                        title: 'Error!',
+                        text: 'No WordPress site selected.',
+                        type: 'error'
+                    });
+                    return;
+                }
+
+                if (!$scope.currentWP.PPUsername || !$scope.currentWP.PPPassword) {
+                    new PNotify({
+                        title: 'Error!',
+                        text: 'Please provide both username and password',
+                        type: 'error'
+                    });
+                    return;
+                }
+
+                var data = {
+                    siteId: $scope.currentWP.id,
+                    setting: 'password-protection',
+                    value: 1,
+                    PPUsername: $scope.currentWP.PPUsername,
+                    PPPassword: $scope.currentWP.PPPassword
+                };
+
+                $('#passwordProtectionModal').modal('hide');
+
+                GLobalAjaxCall($http, "{% url 'UpdateWPSettings' %}", data,
+                    function(response) {
+                        if (response.data.status === 1) {
+                            // Update the site's password protection state
+                            $scope.currentWP.passwordProtection = true;
+                            new PNotify({
+                                title: 'Success!',
+                                text: 'Password protection enabled successfully!',
+                                type: 'success'
+                            });
+                            // Refresh the site data
+                            fetchSiteData($scope.currentWP);
+                        } else {
+                            // Revert the checkbox state
+                            $scope.currentWP.passwordProtection = false;
+                            new PNotify({
+                                title: 'Error!',
+                                text: response.data.error_message || 'Failed to enable password protection',
+                                type: 'error'
+                            });
+                        }
+                    },
+                    function(error) {
+                        // Revert the checkbox state
+                        $scope.currentWP.passwordProtection = false;
+                        new PNotify({
+                            title: 'Error!',
+                            text: 'Could not connect to server',
+                            type: 'error'
+                        });
+                    }
+                );
+            };
+        });
+
+        // Add a range filter for pagination
+        angular.module('CyberCP').filter('range', function() {
+            return function(input, start, end) {
+                start = parseInt(start);
+                end = parseInt(end);
+                var direction = (start <= end) ? 1 : -1;
+                while (start != end) {
+                    input.push(start);
+                    start += direction;
+                }
+                input.push(end);
+                return input;
+            };
+        });
+    </script>
+{% endblock %}
+
+{% block content %}
+    <div class="container" ng-controller="listWordPressSites">
+        <div class="row">
+            <div class="col-lg-12">
+                <div class="panel panel-default">
+                    <div class="panel-heading">
+                        <div class="row">
+                            <div class="col-sm-6">
+                                <h3 class="panel-title">{% trans "WordPress Sites" %}</h3>
+                            </div>
+                            <div class="col-sm-6 text-right">
+                                <a href="{% url 'createWordpress' %}" class="btn btn-success btn-sm">Install WordPress</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="panel-body">
+                        <div class="row mb-3" style="margin-bottom: 20px;">
+                            <div class="col-sm-10">
+                                <input ng-model="searchText" placeholder="Search..." class="form-control">
+                            </div>
+                            <div class="col-sm-2">
+                                <select ng-model="recordsToShow" class="form-control" ng-change="updatePagination()">
+                                    <option>10</option>
+                                    <option>50</option>
+                                    <option>100</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="clearfix" style="margin-bottom: 20px;"></div>
+
+                        <div ng-if="wpSites && wpSites.length === 0" class="alert alert-info">
+                            No WordPress sites found.
+                        </div>
+
+                        <div ng-repeat="site in filteredSites = (wpSites | filter:searchText | limitTo:recordsToShow:(currentPage-1)*recordsToShow)" class="wp-site-item">
+                            <div class="row">
+                                <div class="col-sm-12">
+                                    <div class="wp-site-header">
+                                        <div class="row">
+                                            <div class="col-sm-8">
+                                                <h4>
+                                                    <i class="fas" 
+                                                       ng-class="{'fa-chevron-down': isExpanded(site.id), 'fa-chevron-right': !isExpanded(site.id)}"
+                                                       ng-click="toggleSite(site)"
+                                                       style="cursor: pointer; margin-right: 10px;"></i>
+                                                    {$ site.title $}
+                                                    <span ng-if="site.loading || site.loadingPlugins || site.loadingTheme" class="loading-indicator">
+                                                        <i class="fa fa-spinner fa-spin" style="color: #00749C; font-size: 14px;"></i>
+                                                    </span>
+                                                </h4>
+                                            </div>
+                                            <div class="col-sm-4 text-right">
+                                                <a ng-href="{% url 'WPHome' %}?ID={$ site.id $}" class="btn btn-primary btn-sm">Manage</a>
+                                                <button class="btn btn-danger btn-sm" ng-click="deleteWPSite(site)">Delete</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="wp-site-content" ng-if="isExpanded(site.id)">
+                                        <div class="row">
+                                            <div class="col-sm-3">
+                                                <img ng-src="https://api.microlink.io/?url={$ getFullUrl(site.url) $}&screenshot=true&meta=false&embed=screenshot.url" 
+                                                     alt="{$ site.title $}" 
+                                                     class="img-responsive"
+                                                     style="max-width: 100%; margin-bottom: 10px;"
+                                                     onerror="this.onerror=null; this.src='https://s.wordpress.org/style/images/about/WordPress-logotype-standard.png';">
+                                                <div class="text-center">
+                                                    <a ng-href="{$ getFullUrl(site.url) $}" target="_blank" class="btn btn-default btn-sm">
+                                                        <i class="fas fa-external-link-alt"></i> Visit Site
+                                                    </a>
+                                                    <a href="{% url 'AutoLogin' %}?id={$ site.id $}" target="_blank" class="btn btn-primary btn-sm">
+                                                        <i class="fab fa-wordpress"></i> WP Login
+                                                    </a>
+                                                </div>
+                                            </div>
+                                            <div class="col-sm-9">
+                                                <div class="row">
+                                                    <div class="col-sm-3">
+                                                        <div class="info-box">
+                                                            <label>WordPress</label>
+                                                            <span>{$ site.version || 'Loading...' $}</span>
+                                                            <i ng-if="site.loading" class="fa fa-spinner fa-spin" style="margin-left: 5px; font-size: 12px;"></i>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-sm-3">
+                                                        <div class="info-box">
+                                                            <label>PHP Version</label>
+                                                            <span>{$ site.phpVersion || 'Loading...' $}</span>
+                                                            <i ng-if="site.loading" class="fa fa-spinner fa-spin" style="margin-left: 5px; font-size: 12px;"></i>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-sm-3">
+                                                        <div class="info-box">
+                                                            <label>Theme</label>
+                                                            <span>{$ site.activeTheme || 'Loading...' $}</span>
+                                                            <i ng-if="site.loadingTheme" class="fa fa-spinner fa-spin" style="margin-left: 5px; font-size: 12px;"></i>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-sm-3">
+                                                        <div class="info-box">
+                                                            <label>Plugins</label>
+                                                            <span ng-if="site.activePlugins !== undefined">{$ site.activePlugins $} active of {$ site.totalPlugins $}</span>
+                                                            <span ng-if="site.activePlugins === undefined">Loading...</span>
+                                                            <i ng-if="site.loadingPlugins" class="fa fa-spinner fa-spin" style="margin-left: 5px; font-size: 12px;"></i>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div class="row mt-3">
+                                                    <div class="col-sm-6">
+                                                        <div class="checkbox">
+                                                            <label>
+                                                                <input type="checkbox" ng-model="site.searchIndex" ng-change="updateSetting(site, 'search-indexing')">
+                                                                Search engine indexing
+                                                            </label>
+                                                        </div>
+                                                        <div class="checkbox">
+                                                            <label>
+                                                                <input type="checkbox" ng-model="site.debugging" ng-change="updateSetting(site, 'debugging')">
+                                                                Debugging
+                                                            </label>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-sm-6">
+                                                        <div class="checkbox">
+                                                            <label>
+                                                                <input type="checkbox" 
+                                                                       ng-model="site.passwordProtection"
+                                                                       ng-change="togglePasswordProtection(site)">
+                                                                Password protection
+                                                            </label>
+                                                        </div>
+                                                        <div class="checkbox">
+                                                            <label>
+                                                                <input type="checkbox" ng-model="site.maintenanceMode" ng-change="updateSetting(site, 'maintenance-mode')">
+                                                                Maintenance mode
+                                                            </label>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 2%" class="row">
+                            <div class="col-md-12">
+                                <div class="row">
+                                    <div class="col-md-9">
+                                        <span>Showing {$ ((currentPage-1)*recordsToShow) + 1 $} to {$ ((currentPage-1)*recordsToShow) + filteredSites.length $} of {$ (wpSites | filter:searchText).length $} sites</span>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="form-group">
+                                            <select ng-model="currentPage" class="form-control" ng-options="page for page in [] | range:1:totalPages">
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Password Protection Modal -->
+        <div class="modal fade" id="passwordProtectionModal" tabindex="-1" role="dialog">
+            <div class="modal-dialog" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Password Protection</h5>
+                        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                        <form>
+                            <div class="form-group">
+                                <label>Username</label>
+                                <input type="text" class="form-control" ng-model="currentWP.PPUsername" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Password</label>
+                                <input type="password" class="form-control" ng-model="currentWP.PPPassword" required>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                        <button type="button" class="btn btn-primary" ng-click="submitPasswordProtection()">Enable Protection</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .wp-site-item {
+            border: 1px solid #ddd;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+        .wp-site-header {
+            padding: 15px;
+            border-bottom: 1px solid #ddd;
+            background: #f5f5f5;
+        }
+        .wp-site-content {
+            padding: 15px;
+        }
+        .info-box {
+            margin-bottom: 15px;
+        }
+        .info-box label {
+            display: block;
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        .info-box span {
+            font-size: 14px;
+            font-weight: bold;
+        }
+        .checkbox {
+            margin-bottom: 10px;
+        }
+        .mb-3 {
+            margin-bottom: 1rem;
+        }
+        .clearfix {
+            clear: both;
+        }
+        .panel-body {
+            padding: 20px;
+        }
+        .btn {
+            margin: 0 2px;
+        }
+        .btn i {
+            margin-right: 5px;
+        }
+        .text-center .btn {
+            min-width: 100px;
+        }
+        .loading-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: #00749C;
+            font-size: 14px;
+            padding: 0 8px;
+        }
+        .loading-indicator i {
+            font-size: 14px;
+            margin-left: 4px;
+        }
+    </style>
+{% endblock content %}
+
+
