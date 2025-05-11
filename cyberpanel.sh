@@ -306,7 +306,7 @@ echo -e "Checking virtualization type..."
 #  Debug_Log2 "CyberPanel does not support LXC.. [404]"
 #  exit
 #fi
-#remove per https://github.com/quantum-host/webpanel/issues/589
+#remove per https://github.com/usmannasir/cyberpanel/issues/589
 
 if hostnamectl | grep -q "Virtualization: openvz"; then
   echo -e "OpenVZ detected...\n"
@@ -1149,7 +1149,7 @@ if [[ "$Server_OS" = "Ubuntu" ]] && [[ "$Server_OS_Version" = "22" ]] ; then
   cp /usr/bin/python3.10 /usr/local/CyberCP/bin/python3
 fi
 
-rm -rf cyberpanel
+rm -rf webpanel
 echo -e "\nFetching files from ${Git_Clone_URL}...\n"
 
 Debug_Log2 "Getting CyberPanel code..,4"
@@ -1159,12 +1159,12 @@ Retry_Command "git clone ${Git_Clone_URL}"
 
 echo -e "\nCyberPanel source code downloaded...\n"
 
-cd cyberpanel || exit
+cd webpanel || exit
 git checkout "$Branch_Name"
   Check_Return "git checkout"
 cd - || exit
-cp -r cyberpanel /usr/local/cyberpanel
-cd cyberpanel/install || exit
+cp -r webpanel/usr/local/cyberpanel
+cd webpanel/install || exit
 
 Debug_Log2 "Necessary components installed..,5"
 }
@@ -1461,7 +1461,7 @@ if [[ $Server_Edition = "Enterprise" ]] ; then
   Enterprise_Flag="--ent ent --serial "
 fi
 
-sed -i 's|git clone https://github.com/quantum-host/webpanel|echo downloaded|g' install.py
+sed -i 's|git clone https://github.com/usmannasir/cyberpanel|echo downloaded|g' install.py
 sed -i 's|mirror.cyberpanel.net|cyberpanel.sh|g' install.py
 
 

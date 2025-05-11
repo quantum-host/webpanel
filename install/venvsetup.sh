@@ -903,25 +903,25 @@ if [[ $DEV == "ON" ]] ; then
 fi
 
 if [ -f requirements.txt ] && [ -d cyberpanel ] ; then
-	rm -rf cyberpanel
+	rm -rf webpanel
 	rm -f requirements.txt
 fi
 
 if [[ $SERVER_COUNTRY == "CN" ]] ; then
 	wget https://cyberpanel.sh/cyberpanel-git.tar.gz
 	tar xzvf cyberpanel-git.tar.gz > /dev/null
-	cp -r cyberpanel /usr/local/cyberpanel
-	cd cyberpanel/install
+	cp -r webpanel/usr/local/cyberpanel
+	cd webpanel/install
 else
 	if [[ $DEV == "ON" ]] ; then
 	git clone https://github.com/quantum-host/webpanel
-	cd cyberpanel
+	cd webpanel
 	git checkout $BRANCH_NAME
 	cd -
-	cd cyberpanel/install
+	cd webpanel/install
 	else
 	git clone https://github.com/quantum-host/webpanel
-	cd cyberpanel/install
+	cd webpanel/install
 	fi
 fi
 curl https://cyberpanel.sh/?version
